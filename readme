@@ -1,0 +1,11 @@
+pip install telegram 
+pip install telethon
+pip --upgrade telegram
+pip install --upgrade telethon
+
+
+Install All the libs 
+
+
+For Termux/Shell User
+git clone "git link"
