@@ -1,0 +1,198 @@
+import asyncio
+import logging
+import re
+import time
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler, CallbackContext
+from telethon.sync import TelegramClient
+from telethon.tl.functions.messages import ForwardMessagesRequest
+
+# Define states for conversation handler
+CHOOSING, CUSTOM_MESSAGE, PICTURE, PICTURE_WITH_TEXT, MESSAGE_LINK = range(5)
+
+# Telegram bot token and Telethon credentials
+TELEGRAM_BOT_TOKEN = '7267998053:AAGEBzvvBMVSmgVaI1rPqkseGymBARltY-o' # Replace with your Telegram credentials
+api_id = '20328753'         # Your API ID from my.telegram.org
+api_hash = '24bf1a85c0362e0edd129ef3c524b9c6'     # Your API Hash from my.telegram.org
+phone_number = '+919101588233'  # Your phone number linked to your Telegram account
+message_interval = 60  # Customize the interval between messages
+
+# Define states for conversation handler
+CHOOSING, CUSTOM_MESSAGE, PICTURE, PICTURE_WITH_TEXT, MESSAGE_LINK = range(5)
+
+# Initialize Telethon client
+telethon_client = TelegramClient('session_name', api_id, api_hash)
+
+# Start the Telethon client
+telethon_client.start(phone=phone_number)
+
+# Start command - choose between broadcast, image, or forward
+async def start(update: Update, context: CallbackContext) -> int:
+    reply_keyboard = [['Broadcast Custom Message', 'Send Picture', 'Picture with Text', 'Forward Message by Link']]
+    await update.message.reply_text(
+        'Hello! What would you like to do?\n\n'
+        '1. Broadcast Custom Message\n'
+        '2. Send Picture\n'
+        '3. Send Picture with Custom Text\n'
+        '4. Forward a Message by Link\n\n'
+        'Please choose an option:',
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    )
+    return CHOOSING
+
+
+# Handle the choice from the user
+async def choice_handler(update: Update, context: CallbackContext) -> int:
+    user_choice = update.message.text
+    if user_choice == 'Broadcast Custom Message':
+        await update.message.reply_text('Please enter the custom message you would like to broadcast:')
+        return CUSTOM_MESSAGE
+    elif user_choice == 'Send Picture':
+        await update.message.reply_text('Please upload the picture you want to broadcast:')
+        return PICTURE
+    elif user_choice == 'Picture with Text':
+        await update.message.reply_text('Please upload the picture and then provide the custom text:')
+        return PICTURE_WITH_TEXT
+    elif user_choice == 'Forward Message by Link':
+        await update.message.reply_text('Please send the Telegram message link:')
+        return MESSAGE_LINK
+    else:
+        await update.message.reply_text('Invalid choice. Please start again.')
+        return CHOOSING
+
+
+# Handle custom message broadcast in a continuous loop
+async def broadcast_custom_message(update: Update, context: CallbackContext) -> int:
+    custom_message = update.message.text
+    await update.message.reply_text('Starting continuous broadcast of your message to all groups and channels...')
+
+    while True:
+        async for dialog in telethon_client.iter_dialogs():
+            if dialog.is_group or dialog.is_channel:
+                try:
+                    await telethon_client.send_message(dialog.id, custom_message)
+                    print(f"Message sent to {dialog.name}")
+                    time.sleep(message_interval)
+                except Exception as e:
+                    print(f"Failed to send message to {dialog.name}: {str(e)}")
+
+    return CHOOSING
+
+
+# Handle image broadcast in a continuous loop
+async def broadcast_picture(update: Update, context: CallbackContext) -> int:
+    picture = update.message.photo[-1].file_id
+    picture_file = await context.bot.get_file(picture)
+    picture_path = picture_file.file_path
+
+    await update.message.reply_text('Starting continuous broadcast of your picture to all groups and channels...')
+
+    while True:
+        async for dialog in telethon_client.iter_dialogs():
+            if dialog.is_group or dialog.is_channel:
+                try:
+                    await telethon_client.send_file(dialog.id, picture_path)
+                    print(f"Picture sent to {dialog.name}")
+                    time.sleep(message_interval)
+                except Exception as e:
+                    print(f"Failed to send picture to {dialog.name}: {str(e)}")
+
+    return CHOOSING
+
+
+# Handle picture with custom text broadcast
+async def broadcast_picture_with_text(update: Update, context: CallbackContext) -> int:
+    picture = update.message.photo[-1].file_id
+    context.user_data['picture'] = picture
+    await update.message.reply_text('Now please enter the custom text:')
+    return PICTURE_WITH_TEXT
+
+
+# After text is received, send both picture and text
+async def send_picture_with_text(update: Update, context: CallbackContext) -> int:
+    custom_text = update.message.text
+    picture = context.user_data.get('picture')
+    picture_file = await context.bot.get_file(picture)
+    picture_path = picture_file.file_path
+
+    await update.message.reply_text('Starting continuous broadcast of your picture and custom text to all groups and channels...')
+
+    while True:
+        async for dialog in telethon_client.iter_dialogs():
+            if dialog.is_group or dialog.is_channel:
+                try:
+                    await telethon_client.send_file(dialog.id, picture_path, caption=custom_text)
+                    print(f"Picture with text sent to {dialog.name}")
+                    time.sleep(message_interval)
+                except Exception as e:
+                    print(f"Failed to send picture with text to {dialog.name}: {str(e)}")
+
+    return CHOOSING
+
+
+# Helper function to extract chat ID and message ID from link
+def extract_message_details(message_link):
+    pattern = re.compile(r'https://t\.me/(c/(\d+)|[\w_]+)/(\d+)', re.IGNORECASE)
+    match = pattern.search(message_link)
+    if match:
+        if match.group(2):
+            chat_id = int("-100" + match.group(2))
+        else:
+            chat_id = match.group(1)
+        message_id = int(match.group(3))
+        return chat_id, message_id
+    return None, None
+
+
+# Handle message forwarding from link in a continuous loop
+async def forward_message_link(update: Update, context: CallbackContext) -> int:
+    message_link = update.message.text
+    chat_id, message_id = extract_message_details(message_link)
+
+    if chat_id and message_id:
+        await update.message.reply_text('Starting continuous forwarding of your message to all groups and channels...')
+
+        while True:
+            async for dialog in telethon_client.iter_dialogs():
+                if dialog.is_group or dialog.is_channel:
+                    try:
+                        await telethon_client(ForwardMessagesRequest(
+                            from_peer=chat_id,
+                            id=[message_id],
+                            to_peer=dialog.id
+                        ))
+                        print(f"Message forwarded to {dialog.name}")
+                        time.sleep(message_interval)
+                    except Exception as e:
+                        print(f"Failed to forward message to {dialog.name}: {str(e)}")
+    else:
+        await update.message.reply_text('Invalid message link! Please check the format and try again.')
+
+    return CHOOSING
+
+
+# Main function to run the bot
+def main():
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Conversation handler for managing different paths
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            CHOOSING: [MessageHandler(filters.TEXT & ~filters.COMMAND, choice_handler)],
+            CUSTOM_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_custom_message)],
+            PICTURE: [MessageHandler(filters.PHOTO, broadcast_picture)],
+            PICTURE_WITH_TEXT: [MessageHandler(filters.PHOTO, broadcast_picture_with_text),
+                                MessageHandler(filters.TEXT & ~filters.COMMAND, send_picture_with_text)],
+            MESSAGE_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, forward_message_link)]
+        },
+        fallbacks=[],
+    )
+
+    application.add_handler(conv_handler)
+    application.run_polling()
+
+
+if __name__ == '__main__':
+    main()
